@@ -97,7 +97,7 @@ GPT3LayerWithoutCacheDecoderParallelOperation::
   inputNormNode.outTensorIds = {INTERMIDATE_INPUTNORMOUT_NOCACHE_PARALLEL};
 
   mixdQkvLinearNode.operation.reset(new AclTransformer::LinearOperation(
-      {false, true})); /* 加速库默认会将w进行转置 */
+      {false, false})); /* 加速库默认会将w进行转置 */
   mixdQkvLinearNode.inTensorIds = {INTERMIDATE_INPUTNORMOUT_NOCACHE_PARALLEL,
                                    IN_QKVMIXDWEIGHT_NOCACHE_PARALLEL,
                                    IN_QKVMIXDBIAS_NOCACHE_PARALLEL};
@@ -115,7 +115,7 @@ GPT3LayerWithoutCacheDecoderParallelOperation::
                                            OUT_PRESENTVALUE_NOCACHE_PARALLEL};
 
   selfOutLinearNode.operation.reset(new AclTransformer::LinearParallelOperation(
-      {true, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
+      {false, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
   selfOutLinearNode.inTensorIds = {INTERMIDATE_SELFOUT_NOCACHE_PARALLEL,
                                    IN_SELFOUTLINEARWEIGHT_NOCACHE_PARALLEL,
                                    IN_SELFOUTLINEARBIAS_NOCACHE_PARALLEL};
@@ -135,14 +135,14 @@ GPT3LayerWithoutCacheDecoderParallelOperation::
                               IN_SELFOUTNORMBIAS_NOCACHE_PARALLEL};
   selfNormNode.outTensorIds = {INTERMIDATE_SELFNORMOUT_NOCACHE_PARALLEL};
 
-  ffnNode.operation.reset(new AclTransformer::FfnOperation({false, true}));
+  ffnNode.operation.reset(new AclTransformer::FfnOperation({false, false}));
   ffnNode.inTensorIds = {INTERMIDATE_SELFNORMOUT_NOCACHE_PARALLEL,
                          IN_FFNLINEARWEIGHT_NOCACHE_PARALLEL,
                          IN_FFNLINEARBIAS_NOCACHE_PARALLEL};
   ffnNode.outTensorIds = {INTERMIDATE_FFNOUT_NOCACHE_PARALLEL};
 
   ffnLinearNode.operation.reset(new AclTransformer::LinearParallelOperation(
-      {true, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
+      {false, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
   ffnLinearNode.inTensorIds = {INTERMIDATE_FFNOUT_NOCACHE_PARALLEL,
                                IN_FFNOUTLINEARWEIGHT_NOCACHE_PARALLEL,
                                IN_FFNOUTLINEARBIAS_NOCACHE_PARALLEL};
@@ -298,30 +298,34 @@ void GPT3LayerWithoutCacheParallelGetTensorInputs(
   auto hidden_tensor = static_cast<const phi::DenseTensor*>(hidden.impl().get());
   auto norm_weight_tensor = static_cast<const phi::DenseTensor*>(norm_weight.impl().get());
   auto norm_bias_tensor = static_cast<const phi::DenseTensor*>(norm_bias.impl().get());
-  auto mix_linear_weight_tensor = static_cast<const phi::DenseTensor*>(mix_linear_weight.impl().get());
+  auto mix_linear_weight_tensor = static_cast<phi::DenseTensor*>(mix_linear_weight.impl().get());
   auto mix_linear_bias_tensor = static_cast<const phi::DenseTensor*>(mix_linear_bias.impl().get());
-  auto self_out_linear_weight_tensor = static_cast<const phi::DenseTensor*>(self_out_linear_weight.impl().get());
+  auto self_out_linear_weight_tensor = static_cast<phi::DenseTensor*>(self_out_linear_weight.impl().get());
   auto self_out_linear_bias_tensor = static_cast<const phi::DenseTensor*>(self_out_linear_bias.impl().get());
   auto self_out_norm_weight_tensor = static_cast<const phi::DenseTensor*>(self_out_norm_weight.impl().get());
   auto self_out_norm_bias_tensor = static_cast<const phi::DenseTensor*>(self_out_norm_bias.impl().get());
-  auto ffn_linear_weight_tensor = static_cast<const phi::DenseTensor*>(ffn_linear_weight.impl().get());
+  auto ffn_linear_weight_tensor = static_cast<phi::DenseTensor*>(ffn_linear_weight.impl().get());
   auto ffn_linear_bias_tensor = static_cast<const phi::DenseTensor*>(ffn_linear_bias.impl().get());
-  auto ffn_out_linear_weight_tensor = static_cast<const phi::DenseTensor*>(ffn_out_linear_weight.impl().get());
+  auto ffn_out_linear_weight_tensor = static_cast<phi::DenseTensor*>(ffn_out_linear_weight.impl().get());
   auto ffn_out_linear_bias_tensor = static_cast<const phi::DenseTensor*>(ffn_out_linear_bias.impl().get());
   auto attention_mask_tensor = static_cast<const phi::DenseTensor*>(attention_mask.impl().get());
 
   inputs.push_back(hidden_tensor);
   inputs.push_back(norm_weight_tensor);
   inputs.push_back(norm_bias_tensor);
-  inputs.push_back(mix_linear_weight_tensor);
+  phi::DDim dims1 = mix_linear_weight_tensor->dims();
+  inputs.push_back(&mix_linear_weight_tensor->Resize(phi::make_ddim({dims1[1], dims1[0]})));
   inputs.push_back(mix_linear_bias_tensor);
-  inputs.push_back(self_out_linear_weight_tensor);
+  phi::DDim dims2 = self_out_linear_weight_tensor->dims();
+  inputs.push_back(&self_out_linear_weight_tensor->Resize(phi::make_ddim({dims2[1], dims2[0]})));
   inputs.push_back(self_out_linear_bias_tensor);
   inputs.push_back(self_out_norm_weight_tensor);
   inputs.push_back(self_out_norm_bias_tensor);
-  inputs.push_back(ffn_linear_weight_tensor);
+  phi::DDim dims3 = ffn_linear_weight_tensor->dims();
+  inputs.push_back(&ffn_linear_weight_tensor->Resize(phi::make_ddim({dims3[1], dims3[0]})));
   inputs.push_back(ffn_linear_bias_tensor);
-  inputs.push_back(ffn_out_linear_weight_tensor);
+  phi::DDim dims4 = ffn_out_linear_weight_tensor->dims();
+  inputs.push_back(&ffn_out_linear_weight_tensor->Resize(phi::make_ddim({dims4[1], dims4[0]})));
   inputs.push_back(ffn_out_linear_bias_tensor);
   inputs.push_back(attention_mask_tensor);
 }
@@ -372,39 +376,175 @@ std::vector<paddle::Tensor> GPT3LayerWithoutCacheParallelOp(
                                                attention_mask,
                                                inputs);
 
-  auto out_shape = GPT3LayerWithoutCacheParallelOpInferShape(hidden.shape(),
-                                                     norm_weight.shape(),
-                                                     norm_bias.shape(),
-                                                     mix_linear_weight.shape(),
-                                                     mix_linear_bias.shape(),
-                                                     self_out_linear_weight.shape(),
-                                                     self_out_linear_bias.shape(),
-                                                     self_out_norm_weight.shape(),
-                                                     self_out_norm_bias.shape(),
-                                                     ffn_linear_weight.shape(), 
-                                                     ffn_linear_bias.shape(),
-                                                     ffn_out_linear_weight.shape(),
-                                                     ffn_out_linear_bias.shape(),
-                                                     attention_mask.shape(),
-													 begin_norm_axis,
-                                                     epsilon,
-                                                     shape,
-                                                     scale);
+  std::vector<int64_t> hidden_shape = hidden.shape();
+  std::vector<int64_t> presentkey_shape;
+  std::vector<int64_t> presentvalue_shape;
+
+  presentkey_shape.push_back(hidden_shape.at(0));
+  presentkey_shape.push_back(hidden_shape.at(1));
+  presentkey_shape.push_back(head_num);
+  presentkey_shape.push_back(head_dim);
+
+  presentvalue_shape.push_back(hidden_shape.at(0));
+  presentvalue_shape.push_back(hidden_shape.at(1));
+  presentvalue_shape.push_back(head_num);
+  presentvalue_shape.push_back(head_dim);
 
   std::shared_ptr<phi::DenseTensor> gpt3layerout_tensor =
       std::make_shared<phi::DenseTensor>();
-  gpt3layerout_tensor->Resize(phi::make_ddim(out_shape.at(0)));
+  gpt3layerout_tensor->Resize(phi::make_ddim(hidden_shape));
   dev_ctx->Alloc(gpt3layerout_tensor.get(), inputs.at(0)->dtype());
 
   std::shared_ptr<phi::DenseTensor> presentkey_tensor =
       std::make_shared<phi::DenseTensor>();
-  presentkey_tensor->Resize(phi::make_ddim(out_shape.at(1)));
+  presentkey_tensor->Resize(phi::make_ddim(presentkey_shape));
   dev_ctx->Alloc(presentkey_tensor.get(), inputs.at(0)->dtype());
 
   std::shared_ptr<phi::DenseTensor> presentvalue_tensor =
       std::make_shared<phi::DenseTensor>();
-  presentvalue_tensor->Resize(phi::make_ddim(out_shape.at(2)));
+  presentvalue_tensor->Resize(phi::make_ddim(presentvalue_shape));
   dev_ctx->Alloc(presentvalue_tensor.get(), inputs.at(0)->dtype());
+
+  std::vector<const phi::DenseTensor*> outputs;
+  outputs.push_back(gpt3layerout_tensor.get());
+  outputs.push_back(presentkey_tensor.get());
+  outputs.push_back(presentvalue_tensor.get());
+
+  std::shared_ptr<AclTransformer::GPT3LayerWithoutCacheDecoderParallelOperation>
+      gpt3WithoutDecoderParallelOp;
+  std::shared_ptr<AclTransformer::Plan> gpt3WithoutCacheParallelPlan;
+
+  auto it = g_gpt3WithoutDecoderParallelMap.find(comm);
+  if (it == g_gpt3WithoutDecoderParallelMap.end()) {
+    std::cout << "GPT3LayerWithoutCacheParallelOp comm: " << comm << std::endl;
+    std::shared_ptr<AclTransformer::GPT3LayerWithoutCacheDecoderParallelOperation>
+        decoderOp;
+    std::shared_ptr<AclTransformer::Plan> plan;
+
+    AclTransformer::GPT3LayerParam param = {
+        epsilon, begin_norm_axis, head_dim, head_num, layer_num, {}, {}, comm};
+    decoderOp.reset(new AclTransformer::GPT3LayerWithoutCacheDecoderParallelOperation(param));
+    plan.reset(new AclTransformer::Plan);
+    decoderOp->BuildPlan(plan.get());
+    g_gpt3WithoutDecoderParallelMap[comm] = std::make_pair(decoderOp, plan);
+    gpt3WithoutDecoderParallelOp = decoderOp;
+    gpt3WithoutCacheParallelPlan = plan;
+  } else {
+    gpt3WithoutDecoderParallelOp = it->second.first;
+    gpt3WithoutCacheParallelPlan = it->second.second;
+  }
+  AclTransformer::VariantPack variantPack;
+  BuildVariantPack(inputs, outputs, variantPack);
+
+  /* Set up */
+  AsdOps::Status st =
+      gpt3WithoutCacheParallelPlan->Setup(handle, variantPack);
+  PADDLE_ENFORCE_EQ(
+      st.Ok(),
+      true,
+      phi::errors::External("GPT3LayerWithoutCacheParallelOp Setup plan failed,"
+                            "ret message: %s .",
+                            st.Message()));
+
+  variantPack.workspaceSize =
+      gpt3WithoutCacheParallelPlan->GetWorkspaceSize();
+
+  if (variantPack.workspaceSize > 0) {
+    SetWorkspace(variantPack.workspaceSize);
+    variantPack.workspace = GetWorkspace();
+  }
+  /* Execute */
+  st = gpt3WithoutCacheParallelPlan->Execute(handle, variantPack);
+  PADDLE_ENFORCE_EQ(st.Ok(),
+                    true,
+                    phi::errors::External(
+                        "GPT3LayerWithoutCacheParallelOp Execute plan failed,"
+                        "ret message: %s .",
+                        st.Message()));
+  static uint64_t executeCount_ = 0;
+  executeCount_++;
+  if ((executeCount_) % layer_num == 0) {  // 1.....32,第32次同步
+    int ret = aclrtSynchronizeStream(stream);
+  }
+  return {paddle::Tensor(gpt3layerout_tensor),
+          paddle::Tensor(presentkey_tensor),
+          paddle::Tensor(presentvalue_tensor)};
+}
+
+std::vector<paddle::Tensor> GPT3LayerWithoutCacheParallelOpSetup(
+    const paddle::Tensor& hidden,
+    const paddle::Tensor& norm_weight,
+    const paddle::Tensor& norm_bias,
+    const paddle::Tensor& mix_linear_weight,
+    const paddle::Tensor& mix_linear_bias,
+    const paddle::Tensor& self_out_linear_weight,
+    const paddle::Tensor& self_out_linear_bias,
+    const paddle::Tensor& self_out_norm_weight,
+    const paddle::Tensor& self_out_norm_bias,
+    const paddle::Tensor& ffn_linear_weight,
+    const paddle::Tensor& ffn_linear_bias,
+    const paddle::Tensor& ffn_out_linear_weight,
+    const paddle::Tensor& ffn_out_linear_bias,
+    const paddle::Tensor& attention_mask,
+    int begin_norm_axis,
+    float epsilon,
+    std::vector<int32_t> shape,
+    float scale) {
+  int32_t layer_num = (int32_t)scale;
+  int32_t head_dim = shape[3] / 3;
+  int32_t head_num = self_out_linear_weight.shape()[0] / head_dim;
+
+  auto dev_ctx = static_cast<const phi::CustomContext*>(
+      paddle::experimental::DeviceContextPool::Instance().Get(hidden.place()));
+  auto stream = static_cast<aclrtStream>(dev_ctx->stream());
+  AclTransformer::Handle handle = {stream};
+  HcclComm comm = reinterpret_cast<HcclComm>(dev_ctx->xccl_comm());
+
+  std::vector<const phi::DenseTensor*> inputs;
+  GPT3LayerWithoutCacheParallelGetTensorInputs(hidden,
+                                               norm_weight,
+                                               norm_bias,
+                                               mix_linear_weight,
+                                               mix_linear_bias,
+                                               self_out_linear_weight,
+                                               self_out_linear_bias,
+                                               self_out_norm_weight,
+                                               self_out_norm_bias,
+                                               ffn_linear_weight,
+                                               ffn_linear_bias,
+                                               ffn_out_linear_weight,
+                                               ffn_out_linear_bias,
+                                               attention_mask,
+                                               inputs);
+  std::vector<int64_t> hidden_shape = hidden.shape();
+  std::vector<int64_t> presentkey_shape;
+  std::vector<int64_t> presentvalue_shape;
+
+  presentkey_shape.push_back(hidden_shape.at(0));
+  presentkey_shape.push_back(hidden_shape.at(1));
+  presentkey_shape.push_back(head_num);
+  presentkey_shape.push_back(head_dim);
+
+  presentvalue_shape.push_back(hidden_shape.at(0));
+  presentvalue_shape.push_back(hidden_shape.at(1));
+  presentvalue_shape.push_back(head_num);
+  presentvalue_shape.push_back(head_dim);
+
+  std::shared_ptr<phi::DenseTensor> gpt3layerout_tensor =
+      std::make_shared<phi::DenseTensor>();
+  gpt3layerout_tensor->Resize(phi::make_ddim(hidden_shape));
+  dev_ctx->Alloc(gpt3layerout_tensor.get(), inputs.at(0)->dtype());
+
+  std::shared_ptr<phi::DenseTensor> presentkey_tensor =
+      std::make_shared<phi::DenseTensor>();
+  presentkey_tensor->Resize(phi::make_ddim(presentkey_shape));
+  dev_ctx->Alloc(presentkey_tensor.get(), inputs.at(0)->dtype());
+
+  std::shared_ptr<phi::DenseTensor> presentvalue_tensor =
+      std::make_shared<phi::DenseTensor>();
+  presentvalue_tensor->Resize(phi::make_ddim(presentvalue_shape));
+  dev_ctx->Alloc(presentvalue_tensor.get(), inputs.at(0)->dtype());
+
 
   std::vector<const phi::DenseTensor*> outputs;
   outputs.push_back(gpt3layerout_tensor.get());
@@ -493,6 +633,52 @@ PD_BUILD_OP(gpt3_layer_without_kvcache_parallel)
             "shape: std::vector<int>",
             "scale: float"})
     .SetKernelFn(PD_KERNEL(GPT3LayerWithoutCacheParallelOp))
+    .SetInferShapeFn(PD_INFER_SHAPE(GPT3LayerWithoutCacheParallelOpInferShape));
+
+PD_BUILD_OP(gpt3_layer_without_kvcache_parallel_setup)
+    .Inputs({"Hidden",
+             "NormWeight",
+             "NormBias",
+             "MixLinearWeight",
+             "MixLinearBias",
+             "SelfOutLinearWeight",
+             "SelfOutLinearBias",
+             "SelfOutNormWeight",
+             "SelfOutNormBias",
+             "FfnLinearWeight",
+             "FfnLinearBias",
+             "FfnOutLinearWeight",
+             "FfnOutLinearBias",
+             "AttentionMask"})
+    .Outputs({"Out", "PresentKey", "PresentValue"})
+    .Attrs({"begin_norm_axis: int",
+            "epsilon: float",
+            "shape: std::vector<int>",
+            "scale: float"})
+    .SetKernelFn(PD_KERNEL(GPT3LayerWithoutCacheParallelOpSetup))
+    .SetInferShapeFn(PD_INFER_SHAPE(GPT3LayerWithoutCacheParallelOpInferShape));
+
+PD_BUILD_OP(gpt3_layer_without_kvcache_parallel_execute)
+    .Inputs({"Hidden",
+             "NormWeight",
+             "NormBias",
+             "MixLinearWeight",
+             "MixLinearBias",
+             "SelfOutLinearWeight",
+             "SelfOutLinearBias",
+             "SelfOutNormWeight",
+             "SelfOutNormBias",
+             "FfnLinearWeight",
+             "FfnLinearBias",
+             "FfnOutLinearWeight",
+             "FfnOutLinearBias",
+             "AttentionMask"})
+    .Outputs({"Out", "PresentKey", "PresentValue"})
+    .Attrs({"begin_norm_axis: int",
+            "epsilon: float",
+            "shape: std::vector<int>",
+            "scale: float"})
+    .SetKernelFn(PD_KERNEL(GPT3LayerWithoutCacheParallelOpExecute))
     .SetInferShapeFn(PD_INFER_SHAPE(GPT3LayerWithoutCacheParallelOpInferShape));
 
 #endif

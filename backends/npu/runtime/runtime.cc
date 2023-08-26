@@ -38,11 +38,11 @@ FLAGS_DEFINE_string(npu_profiling_dir,
                     "ACL profiling output dir");
 FLAGS_DEFINE_uint64(npu_profiling_dtypes,
                     ACL_PROF_ACL_API | ACL_PROF_TASK_TIME |
-                        ACL_PROF_AICORE_METRICS | ACL_PROF_AICPU |
-                        ACL_PROF_HCCL_TRACE | ACL_PROF_RUNTIME_API,
+                    ACL_PROF_AICORE_METRICS | ACL_PROF_AICPU |
+                    ACL_PROF_HCCL_TRACE | ACL_PROF_RUNTIME_API,
                     "ACL datatypes to profile");
 FLAGS_DEFINE_uint64(npu_profiling_metrics,
-                    static_cast<uint64_t>(ACL_AICORE_ARITHMETIC_UTILIZATION),
+                    static_cast<uint64_t>(ACL_AICORE_PIPE_UTILIZATION), // ACL_AICORE_ARITHMETIC_UTILIZATION
                     "AI Core metric to profile");
 
 thread_local int g_current_device_id(-1);
@@ -55,7 +55,7 @@ aclrtStream SecondaryStream::Get(aclrtStream aicore_stream) {
 void SecondaryStream::Create(aclrtStream aicore_stream) {
   RUN_CHECK(aicpu_streams.find(aicore_stream) == aicpu_streams.cend());
   aclrtStream aicpu_stream;
-  ACL_CHECK(aclrtCreateStream(&aicpu_stream));
+  ACL_CHECK(aclrtCreateStreamWithConfig(reinterpret_cast<aclrtStream *>(&aicpu_stream), 0, (ACL_STREAM_FAST_LAUNCH | ACL_STREAM_FAST_SYNC)));
   aicpu_streams[aicore_stream] = aicpu_stream;
 }
 
@@ -587,6 +587,7 @@ C_Status XcclAllReduce(void *send_buf,
 #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
   AclTransformer::Handle handle = {reinterpret_cast<aclrtStream>(stream)};
   if (!g_allreduceOp) {
+    std::cout << "Run In XcclAllReduce ACC comm: " << comm << std::endl;
     AclTransformer::AllReduceParam param =
       {0, 0, 0, "sum", "hccl", true, reinterpret_cast<HcclComm>(comm)};
     g_allreduceOp.reset(new AclTransformer::AllReduceOperation(param));
@@ -709,7 +710,7 @@ C_Status XcclAllGather(void *send_buf,
   
   AclTransformer::Handle handle = {reinterpret_cast<aclrtStream>(stream)};
   if (!g_allgatherOp) {
-    std::cout << "Run In XcclAllGather ACC" << std::endl;
+    std::cout << "Run In XcclAllGather ACC comm: " << comm << std::endl;
     AclTransformer::AllGatherParam param =
       {0, 0, 0, "hccl", true, reinterpret_cast<HcclComm>(comm)};
     g_allgatherOp.reset(new AclTransformer::AllGatherOperation(param));
@@ -817,8 +818,11 @@ C_Status ProfilerInitialize(C_Profiler prof, void **user_data) {
           << ", FLAGS_npu_profiling_metrics: " << FLAGS_npu_profiling_metrics;
   std::vector<uint32_t> device_ids(
       {static_cast<uint32_t>(get_current_device_id())});
+  std::string device_id_str = getenv("FLAGS_selected_npus");
+  int device_id = stoi(device_id_str);
+
   AscendProfiler::Instance().update_config(
-      device_ids,
+      {device_id},
       static_cast<aclprofAicoreMetrics>(FLAGS_npu_profiling_metrics),
       nullptr,
       FLAGS_npu_profiling_dtypes);
@@ -830,6 +834,8 @@ C_Status ProfilerInitialize(C_Profiler prof, void **user_data) {
 }
 
 C_Status ProfilerFinalize(C_Profiler prof, void *user_data) {
+  std::string device_id_str = getenv("FLAGS_selected_npus");
+  int device_id = stoi(device_id_str);
   AscendProfiler::Instance().stop();
   AscendProfiler::Instance().destroy_config();
   // ACL_CHECK(aclprofFinalize());
@@ -839,11 +845,15 @@ C_Status ProfilerFinalize(C_Profiler prof, void *user_data) {
 C_Status ProfilerPrepare(C_Profiler prof, void *user_data) { return C_SUCCESS; }
 
 C_Status ProfilerStart(C_Profiler prof, void *user_data) {
+  std::string device_id_str = getenv("FLAGS_selected_npus");
+  int device_id = stoi(device_id_str);
   AscendProfiler::Instance().start();
   return C_SUCCESS;
 }
 
 C_Status ProfilerStop(C_Profiler prof, void *user_data) {
+  std::string device_id_str = getenv("FLAGS_selected_npus");
+  int device_id = stoi(device_id_str);
   AscendProfiler::Instance().stop();
   return C_SUCCESS;
 }
