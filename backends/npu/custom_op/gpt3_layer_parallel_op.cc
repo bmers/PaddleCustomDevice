@@ -104,7 +104,7 @@ GPT3LayerDecoderParallelOperation::GPT3LayerDecoderParallelOperation(
   inputNormNode.outTensorIds = {INTER_INPUTNORMOUT_PARALLEL};
 
   mixdQkvLinearNode.operation.reset(new AclTransformer::LinearOperation(
-      {false, true})); /* 加速库默认会将w进行转置 */
+      {false, false})); /* 加速库默认会将w进行转置 */
   mixdQkvLinearNode.inTensorIds = {INTER_INPUTNORMOUT_PARALLEL,
                                    IN_QKVMIXDWEIGHT_PARALLEL,
                                    IN_QKVMIXDBIAS_PARALLEL};
@@ -132,7 +132,7 @@ GPT3LayerDecoderParallelOperation::GPT3LayerDecoderParallelOperation(
   selfAttentionKvCacheNode.useVariantPackParam = true;
 
   selfOutLinearNode.operation.reset(new AclTransformer::LinearParallelOperation(
-      {true, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
+      {false, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
   selfOutLinearNode.inTensorIds = {INTER_SELFOUT_PARALLEL,
                                    IN_SELFOUTLINEARWEIGHT_PARALLEL,
                                    IN_SELFOUTLINEARBIAS_PARALLEL};
@@ -150,14 +150,14 @@ GPT3LayerDecoderParallelOperation::GPT3LayerDecoderParallelOperation(
                               IN_SELFOUTNORMBIAS_PARALLEL};
   selfNormNode.outTensorIds = {INTER_SELFNORMOUT_PARALLEL};
 
-  ffnNode.operation.reset(new AclTransformer::FfnOperation({false, true}));
+  ffnNode.operation.reset(new AclTransformer::FfnOperation({false, false}));
   ffnNode.inTensorIds = {INTER_SELFNORMOUT_PARALLEL,
                          IN_FFNLINEARWEIGHT_PARALLEL,
                          IN_FFNLINEARBIAS_PARALLEL};
   ffnNode.outTensorIds = {INTER_FFNOUT_PARALLEL};
 
   ffnLinearNode.operation.reset(new AclTransformer::LinearParallelOperation(
-      {true, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
+      {false, 0, 0, 0, "YES", "RowParallel", "hccl", true, param_.comm}));
   ffnLinearNode.inTensorIds = {INTER_FFNOUT_PARALLEL,
                                IN_FFNOUTLINEARWEIGHT_PARALLEL,
                                IN_FFNOUTLINEARBIAS_PARALLEL};
@@ -310,10 +310,10 @@ void GPT3LayerParallelGetTensorInputs(
   auto norm_bias_tensor =
       static_cast<const phi::DenseTensor *>(norm_bias.impl().get());
   auto mix_linear_weight_tensor =
-      static_cast<const phi::DenseTensor *>(mix_linear_weight.impl().get());
+      static_cast<phi::DenseTensor *>(mix_linear_weight.impl().get());
   auto mix_linear_bias_tensor =
       static_cast<const phi::DenseTensor *>(mix_linear_bias.impl().get());
-  auto self_out_linear_weight_tensor = static_cast<const phi::DenseTensor *>(
+  auto self_out_linear_weight_tensor = static_cast<phi::DenseTensor *>(
       self_out_linear_weight.impl().get());
   auto self_out_linear_bias_tensor =
       static_cast<const phi::DenseTensor *>(self_out_linear_bias.impl().get());
@@ -322,11 +322,11 @@ void GPT3LayerParallelGetTensorInputs(
   auto self_out_norm_bias_tensor =
       static_cast<const phi::DenseTensor *>(self_out_norm_bias.impl().get());
   auto ffn_linear_weight_tensor =
-      static_cast<const phi::DenseTensor *>(ffn_linear_weight.impl().get());
+      static_cast<phi::DenseTensor *>(ffn_linear_weight.impl().get());
   auto ffn_linear_bias_tensor =
       static_cast<const phi::DenseTensor *>(ffn_linear_bias.impl().get());
   auto ffn_out_linear_weight_tensor =
-      static_cast<const phi::DenseTensor *>(ffn_out_linear_weight.impl().get());
+      static_cast<phi::DenseTensor *>(ffn_out_linear_weight.impl().get());
   auto ffn_out_linear_bias_tensor =
       static_cast<const phi::DenseTensor *>(ffn_out_linear_bias.impl().get());
 
@@ -343,15 +343,19 @@ void GPT3LayerParallelGetTensorInputs(
   inputs.push_back(hidden_tensor);
   inputs.push_back(norm_weight_tensor);
   inputs.push_back(norm_bias_tensor);
-  inputs.push_back(mix_linear_weight_tensor);
+  phi::DDim dims1 = mix_linear_weight_tensor->dims();
+  inputs.push_back(&mix_linear_weight_tensor->Resize(phi::make_ddim({dims1[1], dims1[0]})));
   inputs.push_back(mix_linear_bias_tensor);
-  inputs.push_back(self_out_linear_weight_tensor);
+  phi::DDim dims2 = self_out_linear_weight_tensor->dims();
+  inputs.push_back(&self_out_linear_weight_tensor->Resize(phi::make_ddim({dims2[1], dims2[0]})));
   inputs.push_back(self_out_linear_bias_tensor);
   inputs.push_back(self_out_norm_weight_tensor);
   inputs.push_back(self_out_norm_bias_tensor);
-  inputs.push_back(ffn_linear_weight_tensor);
+  phi::DDim dims3 = ffn_linear_weight_tensor->dims();
+  inputs.push_back(&ffn_linear_weight_tensor->Resize(phi::make_ddim({dims3[1], dims3[0]})));
   inputs.push_back(ffn_linear_bias_tensor);
-  inputs.push_back(ffn_out_linear_weight_tensor);
+  phi::DDim dims4 = ffn_out_linear_weight_tensor->dims();
+  inputs.push_back(&ffn_out_linear_weight_tensor->Resize(phi::make_ddim({dims4[1], dims4[0]})));
   inputs.push_back(ffn_out_linear_bias_tensor);
   inputs.push_back(&seq_len_dense);
   inputs.push_back(&token_offset_dense);
