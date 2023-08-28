@@ -20,10 +20,37 @@
 #include <hccl/hccl.h>
 #include <hccl/hccl_types.h>
 
+#define GPT3_LAYER_FLASH_ATTENTION_MAX_SEQ_LEN 1024
+
 struct GPT3LayerWorkspace {
     void *workspace_ = nullptr;
     uint64_t workspaceSize_ = 0;
 };
+
+class GPT3LayerParallelCustomOp {
+public:
+  void ThreadProcessTask();
+  void ExecutePlan(int layerId);
+  void PushTask(int layerId);
+  int PopTask();
+  SetParam(AclTransformer::GPT3LayerParam &param);
+
+public:
+  std::vector<AclTransformer::VariantPack> variantPacks_;
+  std::vector<std::shared_ptr<AclTransformer::GraphOperation>> operations_;
+  std::vector<std::shared_ptr<AclTransformer::Plan>> plans_;
+  std::thread taskProcessThread_;
+  std::queue<int> taskQueue_;
+
+  std::atomic_bool allTaskFinish_ = false;
+  int32_t curBatchSize_  = 0;
+  int32_t layerNum_ = 0;
+  int32_t layerCount_ = 0;
+private:
+  int32_t currentDevId_ = 0;
+  std::mutex mutex_;
+  std::condition_variable cond_;
+}
 
 namespace AclTransformer {
 struct GPT3LayerParam {
