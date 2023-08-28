@@ -501,7 +501,7 @@ def gen_fuse_attention_cached_parallel_layer():
     def gpt3_layer_cache_adaptor(embeddings, norm_weight, norm_bias, mix_linear_weight, mix_linear_bias,
     self_out_linear_weight, self_out_linear_bias, self_out_norm_weight, self_out_norm_bias,
     ffn_linear_weight, ffn_linear_bias, ffn_out_linear_weight, ffn_out_linear_bias, attn_mask, past_key, past_value):
-        gpt3_layer_parallel_op = ir.PassDesc.OP.gpt3_layer_parallel
+        gpt3_layer_parallel_op = ir.PassDesc.OP.gpt3_layer_parallel_async
         gpt3_layer_parallel_op._outputs = {}
         gpt3_layer_parallel_op(
             Hidden=embeddings,
@@ -521,7 +521,7 @@ def gen_fuse_attention_cached_parallel_layer():
             PastKey=past_key,
             PastValue=past_value)
 
-        outs_name = [paddle.fluid.unique_name.generate('gpt3_layer_parallel') for i in range(3)] # 3 outputs
+        outs_name = [paddle.fluid.unique_name.generate('gpt3_layer_parallel_async') for i in range(3)] # 3 outputs
         print(outs_name)
         gpt3_layer_parallel_op._desc.set_output("Out", [outs_name[0]])
         gpt3_layer_parallel_op._desc.set_output("PresentKey", [outs_name[1]])

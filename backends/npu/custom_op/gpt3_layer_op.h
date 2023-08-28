@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ACLTRANSFORMER_GPT3_LAYER_OPERATION_H
-#define ACLTRANSFORMER_GPT3_LAYER_OPERATION_H
+#pragma once
 
 #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#include <atomic>
+#include <thread>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 #include "acltransformer/graph_operation.h"
 #include <hccl/hccl.h>
 #include <hccl/hccl_types.h>
 
-struct GPT3LayerWorkspace {
-    void *workspace_ = nullptr;
-    uint64_t workspaceSize_ = 0;
-};
+#define GPT3_LAYER_FLASH_ATTENTION_MAX_SEQ_LEN 1024
 
 namespace AclTransformer {
 struct GPT3LayerParam {
@@ -97,6 +98,40 @@ class GPT3LayerWithoutCacheDecoderParallelOperation : public GraphOperation {
   GPT3LayerParam param_;
 };
 } // namespace AclTransformer
-#endif // PADDLE_WITH_ASCEND_TRANSFORMER_ACC
 
-#endif
+struct GPT3LayerWorkspace {
+    void *workspace_ = nullptr;
+    uint64_t workspaceSize_ = 0;
+};
+
+class GPT3LayerParallelCustomOp {
+public:
+  GPT3LayerParallelCustomOp(int layerNum, int batchSize, AclTransformer::Handle handle);
+  void SetParam(AclTransformer::GPT3LayerParam &param);
+  AclTransformer::VariantPack &GetVariantPack(int layerId);
+  void Setup(int layerId, AclTransformer::Handle handle);
+  void SyncFinalLayer(aclrtStream stream);
+  int GetCurBatchSize();
+
+private:
+  void ThreadProcessTask();
+  void PushTask(int layerId);
+  int PopTask();
+  void ExecutePlan(int layerId);
+
+private:
+  int currentDevId_ = 0;
+  int curBatchSize_ = 0;
+  int layerNum_ = 0;
+  std::vector<AclTransformer::VariantPack> variantPacks_;
+  std::vector<std::shared_ptr<AclTransformer::GraphOperation>> operations_;
+  std::vector<std::shared_ptr<AclTransformer::Plan>> plans_;
+  std::thread taskProcessThread_;
+  std::queue<int> taskQueue_;
+  std::atomic_bool allTaskFinish_;
+  std::atomic_int layerCount_;
+  std::mutex mutex_;
+  std::condition_variable cond_;
+  AclTransformer::Handle handle_;
+};
+#endif // PADDLE_WITH_ASCEND_TRANSFORMER_ACC

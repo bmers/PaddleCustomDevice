@@ -531,13 +531,10 @@ std::vector<paddle::Tensor> GPT3LayerParallelOp(
         decoderOp;
     std::shared_ptr<AclTransformer::Plan> plan;
 
-    //int batch_tmp = 1;
-    int max_seq_len_tmp = 1024;
-    //int org_seq_len = past_key.shape().at(1);
     InitFlashAttentionTensor(layer_num,
                              batch_size,
                              org_seq_len,
-                             max_seq_len_tmp,
+                             GPT3_LAYER_FLASH_ATTENTION_MAX_SEQ_LEN,
                              head_dim,
                              head_num,
                              inputs[inputs.size() - 2],
@@ -565,8 +562,9 @@ std::vector<paddle::Tensor> GPT3LayerParallelOp(
   static uint64_t executeCount_ = 0;
 
   AclTransformer::VariantPack variantPack;
-  g_variantPackParam_ = {g_seq_len, g_token_offset};
-  variantPack.param = g_variantPackParam_;
+  AclTransformer::SelfAttentionKvCacheFusionVariantPackParam variantPackParam = {g_seq_len, g_token_offset};
+
+  variantPack.param = variantPackParam;
   BuildVariantPack(inputs, *gpt3layerout_tensor.get(), variantPack);
 
   /* Set up */
@@ -613,6 +611,263 @@ std::vector<paddle::Tensor> GPT3LayerParallelOp(
   return {paddle::Tensor(gpt3layerout_tensor), past_key, past_value};
 }
 
+GPT3LayerParallelCustomOp::GPT3LayerParallelCustomOp(int layerNum, int batchSize, AclTransformer::Handle handle)
+{
+  /* Init Task Queue */
+  std::thread thread = std::thread(std::bind(&GPT3LayerParallelCustomOp::ThreadProcessTask, this));
+  taskProcessThread_ = std::move(thread);
+
+  std::string device_id_str = getenv("FLAGS_selected_npus");
+  currentDevId_ = stoi(device_id_str);
+
+  handle_ = handle;
+  layerNum_ = layerNum;
+  curBatchSize_ = batchSize;
+  layerCount_ = 0;
+  allTaskFinish_ = false;
+}
+
+void GPT3LayerParallelCustomOp::SetParam(AclTransformer::GPT3LayerParam &param)
+{
+  variantPacks_.resize(layerNum_);
+  operations_.resize(layerNum_);
+  plans_.resize(layerNum_);
+
+  for (int i = 0; i < layerNum_; i++) {
+    /* TODO:修改为模板，即可new不同对象 */
+    AclTransformer::GraphOperation *op = new AclTransformer::GPT3LayerDecoderParallelOperation(param);
+
+    operations_.at(i).reset(op);
+    AclTransformer::Plan *plan = new AclTransformer::Plan();
+    op->BuildPlan(plan);
+    plans_.at(i).reset(plan);
+  }
+}
+
+void GPT3LayerParallelCustomOp::PushTask(int layerId)
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  taskQueue_.push(layerId);
+  lock.unlock();
+  cond_.notify_one();
+}
+
+int GPT3LayerParallelCustomOp::PopTask()
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (taskQueue_.empty()) {
+      cond_.wait(lock);
+  }
+  int layerId = taskQueue_.front();
+  taskQueue_.pop();
+  return layerId;
+}
+
+void GPT3LayerParallelCustomOp::ExecutePlan(int layerId)
+{
+  AclTransformer::Plan &plan = *plans_.at(layerId);
+  AclTransformer::VariantPack &variantPack = variantPacks_.at(layerId);
+
+  AsdOps::Status st = plan.Execute(handle_, variantPack);
+  PADDLE_ENFORCE_EQ(st.Ok(),
+                    true,
+                    phi::errors::External("GPT3LayerParallelOp %dth Execute plan failed,"
+                                          "ret message: %s .", layerId,
+                                          st.Message()));
+}
+
+void GPT3LayerParallelCustomOp::ThreadProcessTask()
+{
+  ASD_LOG(FATAL) << "GPT3Layer ThreadProcessTask start";
+
+  int ret = AsdRtDeviceSetCurrent(currentDevId_);
+  ASD_LOG_IF(ret != 0, ERROR) << "AsdRtDeviceSetCurrent fail, error:" << ret;
+
+  int processTaskCount = 0;
+  while (true) {
+      int layerId = PopTask();
+      ExecutePlan(layerId);
+      processTaskCount++;
+      if (processTaskCount == layerNum_) {
+          ASD_LOG(INFO) << "GPT3Layer thread process all layers";
+          processTaskCount = 0;
+          allTaskFinish_ = true;
+      }
+  }
+}
+
+void GPT3LayerParallelCustomOp::SyncFinalLayer(aclrtStream stream)
+{
+  if (layerCount_ != layerNum_) return; /* 非最后一层layer, 则直接返回 */
+
+  while (!allTaskFinish_) {}; /* 等待最后一个layer execute */
+  aclError ret = aclrtSynchronizeStream(stream);
+  PADDLE_ENFORCE_NPU_SUCCESS(ret);
+
+  layerCount_ = 0;
+  allTaskFinish_ = false;
+}
+
+int GPT3LayerParallelCustomOp::GetCurBatchSize()
+{
+  return curBatchSize_;
+}
+
+AclTransformer::VariantPack& GPT3LayerParallelCustomOp::GetVariantPack(int layerId)
+{
+  return variantPacks_.at(layerId);
+}
+
+void GPT3LayerParallelCustomOp::Setup(int layerId, AclTransformer::Handle handle)
+{
+  AclTransformer::Plan &plan = *plans_.at(layerId);
+  AclTransformer::VariantPack &variantPack = variantPacks_.at(layerId);
+
+  AsdOps::Status st = plan.Setup(handle, variantPack);
+  PADDLE_ENFORCE_EQ(st.Ok(),
+                    true,
+                    phi::errors::External("GPT3LayerParallelOp Setup plan failed,"
+                                          "ret message: %s .",
+                                          st.Message()));
+
+  variantPack.workspaceSize = plan.GetWorkspaceSize();
+  VLOG(4) << " GPT3LayerParallelOp plan workspace size:" << variantPack.workspaceSize;
+
+  if (variantPack.workspaceSize > 0) {
+    SetWorkspace(variantPack.workspaceSize);
+    variantPack.workspace = GetWorkspace();
+  }
+
+  PushTask(layerId);
+  layerCount_++;
+}
+
+std::shared_ptr<GPT3LayerParallelCustomOp> g_gpt3DecoderParallelCustomOp;
+static int g_parallelLayerId = 0;
+
+std::vector<paddle::Tensor> GPT3LayerParallelOpAsync(
+    const paddle::Tensor &hidden,
+    const paddle::Tensor &norm_weight,
+    const paddle::Tensor &norm_bias,
+    const paddle::Tensor &mix_linear_weight,
+    const paddle::Tensor &mix_linear_bias,
+    const paddle::Tensor &self_out_linear_weight,
+    const paddle::Tensor &self_out_linear_bias,
+    const paddle::Tensor &self_out_norm_weight,
+    const paddle::Tensor &self_out_norm_bias,
+    const paddle::Tensor &ffn_linear_weight,
+    const paddle::Tensor &ffn_linear_bias,
+    const paddle::Tensor &ffn_out_linear_weight,
+    const paddle::Tensor &ffn_out_linear_bias,
+    const paddle::Tensor &attention_mask,
+    const paddle::Tensor &past_key,
+    const paddle::Tensor &past_value,
+    int begin_norm_axis,
+    float epsilon,
+    std::vector<int32_t> shape,
+    float scale) {
+
+  int32_t batch_size = past_key.shape().at(0);
+  int32_t org_seq_len = past_key.shape().at(1);
+  int32_t layer_num = (int32_t)scale;
+  int32_t head_dim = shape[3] / 3;
+  int32_t head_num = self_out_linear_weight.shape()[0] / head_dim;
+
+  if (g_parallelLayerId % layer_num == 0) { /* 0 ....31,第2个token32次时候清零，调整 */
+    g_parallelLayerId = 0;
+    /* token_offset为kvLen，第一个token，初始化为org_seq_len */
+    if (!g_gpt3DecoderParallelCustomOp ||
+        g_gpt3DecoderParallelCustomOp->GetCurBatchSize() != batch_size) {
+          g_token_offset_vector.clear();
+          g_token_offset_vector.resize(batch_size, org_seq_len);
+          AsdOps::SVector<int32_t> token_offset_t(batch_size, org_seq_len);
+          g_token_offset = token_offset_t;
+    } else { /* 每处理个token，长度加1 */
+          std::for_each(g_token_offset_vector.begin(),
+                        g_token_offset_vector.end(),
+                        [](int &n) { n++; });
+          std::for_each(g_token_offset.begin(),
+                        g_token_offset.end(),
+                        [](int &n) { n++; });
+    }
+  }
+
+  auto dev_ctx = static_cast<const phi::CustomContext *>(
+      paddle::experimental::DeviceContextPool::Instance().Get(hidden.place()));
+  auto stream = static_cast<aclrtStream>(dev_ctx->stream());
+  AclTransformer::Handle handle = {stream};
+  HcclComm comm = reinterpret_cast<HcclComm>(dev_ctx->xccl_comm());
+
+  phi::DenseTensor seq_len_tensor;
+  phi::DenseTensor token_offset_tensor;
+  phi::DenseTensor layer_id_tensor;
+  AsdOps::SVector<const phi::DenseTensor *> inputs;
+  AsdOps::SVector<int32_t> q_seq_len(batch_size, 1); /* 增量阶段，q_seq_len始终为1 */
+
+  GPT3LayerParallelGetTensorInputs(*dev_ctx,
+                                   g_parallelLayerId,
+                                   hidden,
+                                   norm_weight,
+                                   norm_bias,
+                                   mix_linear_weight,
+                                   mix_linear_bias,
+                                   self_out_linear_weight,
+                                   self_out_linear_bias,
+                                   self_out_norm_weight,
+                                   self_out_norm_bias,
+                                   ffn_linear_weight,
+                                   ffn_linear_bias,
+                                   ffn_out_linear_weight,
+                                   ffn_out_linear_bias,
+                                   seq_len_tensor,
+                                   token_offset_tensor,
+                                   layer_id_tensor,
+                                   inputs);
+
+  std::shared_ptr<phi::DenseTensor> gpt3layerout_tensor =
+      std::make_shared<phi::DenseTensor>();
+  gpt3layerout_tensor->Resize(phi::make_ddim(hidden.shape()));
+  dev_ctx->Alloc(gpt3layerout_tensor.get(), inputs.at(0)->dtype());
+
+  if (!g_gpt3DecoderParallelCustomOp || (g_gpt3DecoderParallelCustomOp->GetCurBatchSize() != batch_size)) {
+    std::cout << "GPT3LayerParallelOpAsync comm: " << comm << std::endl;
+    g_gpt3DecoderParallelCustomOp.reset(new GPT3LayerParallelCustomOp(layer_num, batch_size, handle));
+
+    InitFlashAttentionTensor(layer_num,
+                             batch_size,
+                             org_seq_len,
+                             GPT3_LAYER_FLASH_ATTENTION_MAX_SEQ_LEN,
+                             head_dim,
+                             head_num,
+                             inputs[inputs.size() - 2],
+                             inputs[inputs.size() - 1]);
+
+    AclTransformer::GPT3LayerParam param = {epsilon,
+                                            begin_norm_axis,
+                                            head_dim,
+                                            head_num,
+                                            layer_num,
+                                            g_token_offset,
+                                            q_seq_len,
+                                            comm};
+
+    g_gpt3DecoderParallelCustomOp->SetParam(param);
+  }
+
+  AclTransformer::VariantPack &variantPack = g_gpt3DecoderParallelCustomOp->GetVariantPack(g_parallelLayerId);
+  AclTransformer::SelfAttentionKvCacheFusionVariantPackParam variantPackParam = {q_seq_len, g_token_offset};
+
+  variantPack.param = variantPackParam;
+  BuildVariantPack(inputs, *gpt3layerout_tensor.get(), variantPack);
+
+  /* Set up */
+  g_gpt3DecoderParallelCustomOp->Setup(g_parallelLayerId, handle);
+  g_gpt3DecoderParallelCustomOp->SyncFinalLayer(stream);
+  g_parallelLayerId++;
+
+  return {paddle::Tensor(gpt3layerout_tensor), past_key, past_value};
+}
+
 PD_BUILD_OP(gpt3_layer_parallel)
     .Inputs({"Hidden",
              "NormWeight",
@@ -636,6 +891,33 @@ PD_BUILD_OP(gpt3_layer_parallel)
             "shape: std::vector<int>",
             "scale: float"})
     .SetKernelFn(PD_KERNEL(GPT3LayerParallelOp))
+    .SetInferShapeFn(
+        PD_INFER_SHAPE(GPT3LayerParallelOpInferShape));  // neccessary if the op
+                                                         // has muti_inputs
+
+PD_BUILD_OP(gpt3_layer_parallel_async)
+    .Inputs({"Hidden",
+             "NormWeight",
+             "NormBias",
+             "MixLinearWeight",
+             "MixLinearBias",
+             "SelfOutLinearWeight",
+             "SelfOutLinearBias",
+             "SelfOutNormWeight",
+             "SelfOutNormBias",
+             "FfnLinearWeight",
+             "FfnLinearBias",
+             "FfnOutLinearWeight",
+             "FfnOutLinearBias",
+             "AttentionMask",
+             "PastKey",
+             "PastValue"})
+    .Outputs({"Out", "PresentKey", "PresentValue"})
+    .Attrs({"begin_norm_axis: int",
+            "epsilon: float",
+            "shape: std::vector<int>",
+            "scale: float"})
+    .SetKernelFn(PD_KERNEL(GPT3LayerParallelOpAsync))
     .SetInferShapeFn(
         PD_INFER_SHAPE(GPT3LayerParallelOpInferShape));  // neccessary if the op
                                                          // has muti_inputs
