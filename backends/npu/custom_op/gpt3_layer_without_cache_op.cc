@@ -51,16 +51,11 @@ enum GPT3LayerWithoutCacheDecoderTensorId {
   OUT_PRESENTKEY_NOCACHE,
   OUT_PRESENTVALUE_NOCACHE,
 
-  INTERMIDATE_CASTNORMWEIGHTOUT_NOCACHE,
-  INTERMIDATE_CASTNORMBIASOUT_NOCACHE,
   INTERMIDATE_INPUTNORMOUT_NOCACHE,
   INTERMIDATE_MIXEDLINEAROUTQKV_NOCACHE,
   INTERMIDATE_SELFOUT_NOCACHE,
   INTERMIDATE_SELFLINEAROUT_NOCACHE,
   INTERMIDATE_SELFRESIDUALADDOUT_NOCACHE,
-
-  INTERMIDATE_CASTSELFNORMWEIGHTOUT_NOCACHE,
-  INTERMIDATE_CASTSELFNORMBIASOUT_NOCACHE,
 
   INTERMIDATE_SELFNORMOUT_NOCACHE,
   INTERMIDATE_FFNOUT_NOCACHE,
@@ -69,8 +64,8 @@ enum GPT3LayerWithoutCacheDecoderTensorId {
 
 static const uint64_t IN_TENSOR_COUNT = 14;
 static const uint64_t OUT_TENSOR_COUNT = 3;
-static const uint64_t INTERMEDIATE_TENSOR_COUNT = 12;
-static const uint64_t NODE_COUNT = 13;
+static const uint64_t INTERMEDIATE_TENSOR_COUNT = 8;
+static const uint64_t NODE_COUNT = 9;
 
 GPT3LayerWithoutCacheDecoderOperation::GPT3LayerWithoutCacheDecoderOperation(const GPT3LayerParam &param)
     : GraphOperation("GPT3LayerWithoutCacheDecoderOperation"), param_(param)
@@ -81,31 +76,19 @@ GPT3LayerWithoutCacheDecoderOperation::GPT3LayerWithoutCacheDecoderOperation(con
   opGraph_.nodes.resize(NODE_COUNT);
 
   size_t nodeId = 0;
-  GraphOperation::Node &castNormWeightNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castNormBiasNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &inputNormNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &mixdQkvLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfAttentionKvCacheNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfOutLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfResidualAddNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castSelfNormWeightNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castSelfNormBiasNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfNormNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnResidualAddNode = opGraph_.nodes.at(nodeId++);
 
-  castNormWeightNode.operation.reset(new AclTransformer::CastOperation());
-  castNormWeightNode.inTensorIds = {IN_NORMWEIGHT_NOCACHE};
-  castNormWeightNode.outTensorIds = {INTERMIDATE_CASTNORMWEIGHTOUT_NOCACHE};
-
-  castNormBiasNode.operation.reset(new AclTransformer::CastOperation());
-  castNormBiasNode.inTensorIds = {IN_NORMBIAS_NOCACHE};
-  castNormBiasNode.outTensorIds = {INTERMIDATE_CASTNORMBIASOUT_NOCACHE};
-
   inputNormNode.operation.reset(new AclTransformer::NormOperation(
                       {param_.layerNormEps, param_.layerNormBeginNormAxis, param_.layerNormBeginNormAxis}));
-  inputNormNode.inTensorIds = {IN_HIDDENSTATES_NOCACHE, INTERMIDATE_CASTNORMWEIGHTOUT_NOCACHE, INTERMIDATE_CASTNORMBIASOUT_NOCACHE};
+  inputNormNode.inTensorIds = {IN_HIDDENSTATES_NOCACHE, IN_NORMWEIGHT_NOCACHE, IN_NORMBIAS_NOCACHE};
   inputNormNode.outTensorIds = {INTERMIDATE_INPUTNORMOUT_NOCACHE};
 
   mixdQkvLinearNode.operation.reset(new AclTransformer::LinearOperation({false, true})); /* 加速库默认会将w进行转置 */
@@ -126,17 +109,9 @@ GPT3LayerWithoutCacheDecoderOperation::GPT3LayerWithoutCacheDecoderOperation(con
   selfResidualAddNode.inTensorIds = {IN_HIDDENSTATES_NOCACHE, INTERMIDATE_SELFLINEAROUT_NOCACHE};
   selfResidualAddNode.outTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT_NOCACHE};
 
-  castSelfNormWeightNode.operation.reset(new AclTransformer::CastOperation());
-  castSelfNormWeightNode.inTensorIds = {IN_SELFOUTNORMWEIGHT_NOCACHE};
-  castSelfNormWeightNode.outTensorIds = {INTERMIDATE_CASTSELFNORMWEIGHTOUT_NOCACHE};
-
-  castSelfNormBiasNode.operation.reset(new AclTransformer::CastOperation());
-  castSelfNormBiasNode.inTensorIds = {IN_SELFOUTNORMBIAS_NOCACHE};
-  castSelfNormBiasNode.outTensorIds = {INTERMIDATE_CASTSELFNORMBIASOUT_NOCACHE};
-
   selfNormNode.operation.reset(new AclTransformer::NormOperation(
       {param_.layerNormEps, param_.layerNormBeginNormAxis, param_.layerNormBeginNormAxis}));
-  selfNormNode.inTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT_NOCACHE, INTERMIDATE_CASTSELFNORMWEIGHTOUT_NOCACHE, INTERMIDATE_CASTSELFNORMBIASOUT_NOCACHE};
+  selfNormNode.inTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT_NOCACHE, IN_SELFOUTNORMWEIGHT_NOCACHE, IN_SELFOUTNORMBIAS_NOCACHE};
   selfNormNode.outTensorIds = {INTERMIDATE_SELFNORMOUT_NOCACHE};
           
   ffnNode.operation.reset(new AclTransformer::FfnOperation({false, true}));

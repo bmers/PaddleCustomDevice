@@ -61,9 +61,6 @@ enum GPT3LayerDecoderTensorId
 
   OUT_GPT3LAYEROUT,
 
-  INTERMIDATE_CASTNORMWEIGHTOUT,
-  INTERMIDATE_CASTNORMBIASOUT,
-
   INTERMIDATE_INPUTNORMOUT,
   INTERMIDATE_MIXEDLINEAROUTQKV,
 
@@ -71,9 +68,6 @@ enum GPT3LayerDecoderTensorId
   INTERMIDATE_SELFLINEAROUT,
   INTERMIDATE_SELFRESIDUALADDOUT,
   
-  INTERMIDATE_CASTSELFNORMWEIGHTOUT,
-  INTERMIDATE_CASTSELFNORMBIASOUT,
-
   INTERMIDATE_SELFNORMOUT,
   INTERMIDATE_FFNOUT,
   INTERMIDATE_FFNLINEAROUT,
@@ -81,8 +75,8 @@ enum GPT3LayerDecoderTensorId
 
 static const uint64_t IN_TENSOR_COUNT = 19;
 static const uint64_t OUT_TENSOR_COUNT = 1;
-static const uint64_t INTERMEDIATE_TENSOR_COUNT = 12;
-static const uint64_t NODE_COUNT = 13;
+static const uint64_t INTERMEDIATE_TENSOR_COUNT = 8;
+static const uint64_t NODE_COUNT = 9;
 
 GPT3LayerDecoderOperation::GPT3LayerDecoderOperation(const GPT3LayerParam &param)
     : GraphOperation("GPT3LayerDecoderOperation"), param_(param)
@@ -93,31 +87,19 @@ GPT3LayerDecoderOperation::GPT3LayerDecoderOperation(const GPT3LayerParam &param
   opGraph_.nodes.resize(NODE_COUNT);
 
   size_t nodeId = 0;
-  GraphOperation::Node &castNormWeightNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castNormBiasNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &inputNormNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &mixdQkvLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfAttentionKvCacheNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfOutLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfResidualAddNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castSelfNormWeightNode = opGraph_.nodes.at(nodeId++);
-  GraphOperation::Node &castSelfNormBiasNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &selfNormNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnLinearNode = opGraph_.nodes.at(nodeId++);
   GraphOperation::Node &ffnResidualAddNode = opGraph_.nodes.at(nodeId++);
 
-  castNormWeightNode.operation.reset(new AclTransformer::CastOperation());
-  castNormWeightNode.inTensorIds = {IN_NORMWEIGHT};
-  castNormWeightNode.outTensorIds = {INTERMIDATE_CASTNORMWEIGHTOUT};
-
-  castNormBiasNode.operation.reset(new AclTransformer::CastOperation());
-  castNormBiasNode.inTensorIds = {IN_NORMBIAS};
-  castNormBiasNode.outTensorIds = {INTERMIDATE_CASTNORMBIASOUT};
-
   inputNormNode.operation.reset(new AclTransformer::NormOperation(
       {param_.layerNormEps, param_.layerNormBeginNormAxis, param_.layerNormBeginNormAxis}));
-  inputNormNode.inTensorIds = {IN_HIDDENSTATES, INTERMIDATE_CASTNORMWEIGHTOUT, INTERMIDATE_CASTNORMBIASOUT};
+  inputNormNode.inTensorIds = {IN_HIDDENSTATES, IN_NORMWEIGHT, IN_NORMBIAS};
   inputNormNode.outTensorIds = {INTERMIDATE_INPUTNORMOUT};
 
   mixdQkvLinearNode.operation.reset(new AclTransformer::LinearOperation({false, true})); /* 加速库默认会将w进行转置 */
@@ -144,17 +126,9 @@ GPT3LayerDecoderOperation::GPT3LayerDecoderOperation(const GPT3LayerParam &param
   selfResidualAddNode.inTensorIds = {IN_HIDDENSTATES, INTERMIDATE_SELFLINEAROUT};
   selfResidualAddNode.outTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT};
 
-  castSelfNormWeightNode.operation.reset(new AclTransformer::CastOperation());
-  castSelfNormWeightNode.inTensorIds = {IN_SELFOUTNORMWEIGHT};
-  castSelfNormWeightNode.outTensorIds = {INTERMIDATE_CASTSELFNORMWEIGHTOUT};
-
-  castSelfNormBiasNode.operation.reset(new AclTransformer::CastOperation());
-  castSelfNormBiasNode.inTensorIds = {IN_SELFOUTNORMBIAS};
-  castSelfNormBiasNode.outTensorIds = {INTERMIDATE_CASTSELFNORMBIASOUT};
-
   selfNormNode.operation.reset(new AclTransformer::NormOperation(
       {param_.layerNormEps, param_.layerNormBeginNormAxis, param_.layerNormBeginNormAxis}));
-  selfNormNode.inTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT, INTERMIDATE_CASTSELFNORMWEIGHTOUT, INTERMIDATE_CASTSELFNORMBIASOUT};
+  selfNormNode.inTensorIds = {INTERMIDATE_SELFRESIDUALADDOUT, IN_SELFOUTNORMWEIGHT, IN_SELFOUTNORMBIAS};
   selfNormNode.outTensorIds = {INTERMIDATE_SELFNORMOUT};
 
   ffnNode.operation.reset(new AclTransformer::FfnOperation({false, true}));
