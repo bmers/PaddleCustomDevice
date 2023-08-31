@@ -28,15 +28,11 @@ SelfAttentionKvCacheFusionOpsGPT3Runner::SelfAttentionKvCacheFusionOpsGPT3Runner
     : OpsRunner("SelfAttentionKvCacheFusionOpsGPT3Runner", RUNNER_TYPE_SELF_ATTENTION_KV_FUSION_CACHE),
       param_(param)
 {
-  setupCacheEnable_ = false;
-
-  ASD_LOG(INFO) << "SelfAttentionKvCacheFusionOpsGPT3Runner new, setupCacheEnable:" << setupCacheEnable_;
-  
   auto batch_size = param_.tokenOffset.size();
   if (batch_size == 1) {
-	BuildGraphWithMulsBS1();  
+    BuildGraphWithMulsBS1();
   } else {
-	BuildGraphWithMuls();
+    BuildGraphWithMuls();
   }
 
   SetKernelGrapModifyFunc();
@@ -61,7 +57,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
 
   kernelGraph_.outTensors.resize(1);
   AsdOps::Tensor &context = kernelGraph_.outTensors.at(0);
-  // AsdOps::Tensor &transposedContext = kernelGraph_.outTensors.at(0);
 
   size_t internalTensorId = 0;
   kernelGraph_.internalTensors.resize(6);
@@ -69,8 +64,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
   AsdOps::Tensor &mixedQuery = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &mixedKey = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &mixedValue = kernelGraph_.internalTensors.at(internalTensorId++);
-  // AsdOps::Tensor &transposedCacheK = kernelGraph_.internalTensors.at(internalTensorId++);
-  // AsdOps::Tensor &transposedCacheV = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &divOut = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &attOut = kernelGraph_.internalTensors.at(internalTensorId++);
 
@@ -78,13 +71,10 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
   kernelGraph_.nodes.resize(7);
   auto &permuteMixNode = kernelGraph_.nodes.at(nodeId++);
   auto &splitNode = kernelGraph_.nodes.at(nodeId++);
-  // auto &permuteCacheKNode = kernelGraph_.nodes.at(nodeId++);
   auto &kCacheNode = kernelGraph_.nodes.at(nodeId++);
-  // auto &permuteCacheVNode = kernelGraph_.nodes.at(nodeId++);
   auto &vCacheNode = kernelGraph_.nodes.at(nodeId++);
   auto &mulsQNode = kernelGraph_.nodes.at(nodeId++);
   auto &flashAttentionNode = kernelGraph_.nodes.at(nodeId++);
-  // auto &permuteflashOutNode = kernelGraph_.nodes.at(nodeId++);
   auto &permuteflashOutNode = kernelGraph_.nodes.at(nodeId++);
 
   AsdOps::OpParam::Transpose permuteMixNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2}};
@@ -111,11 +101,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
     }
   };
 
-  // AsdOps::OpParam::Transpose permuteCacheKNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2, 3}};
-  // permuteCacheKNode.opDesc = {0, "TransposeOperation", permuteCacheKNodeParam};
-  // permuteCacheKNode.inTensors = {&cacheK};
-  // permuteCacheKNode.outTensors = {&transposedCacheK};
-
   // 1、k cache
   kCacheNode.opDesc = {0, "KVCacheOperation", AsdOps::OpParam::KVCache{AsdOps::OpParam::KVCache::KVCACHE}};
   kCacheNode.inTensors = {&mixedKey, &layerId, &cacheK, &tokenOffset, &seqLen};
@@ -134,11 +119,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
   };
 
   // 2、V cache  seq_len, batch, head_num, head_size]
-  // AsdOps::OpParam::Transpose permuteCacheVNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2, 3}};
-  // permuteCacheVNode.opDesc = {0, "TransposeOperation", permuteCacheVNodeParam};
-  // permuteCacheVNode.inTensors = {&cacheV};
-  // permuteCacheVNode.outTensors = {&transposedCacheV};
-
   vCacheNode.opDesc = {0, "KVCacheOperation", AsdOps::OpParam::KVCache{AsdOps::OpParam::KVCache::KVCACHE}};
   vCacheNode.inTensors = {&mixedValue, &layerId, &cacheV, &tokenOffset, &seqLen};
   vCacheNode.outTensors = {&cacheV}; // Kcache and Vcache output and input use same space
@@ -169,7 +149,16 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
     }
   };
 
-  // 4、flash attention
+  /*
+   * 4、flash attention
+   * input:
+   * q:[ntokens, hidden_size]
+   * k_present: [layer, batch, max_seqlen, hidden_size]
+   * v_present:[layer, batch, max_seqlen, hidden_size]
+   * layer_id: [1]
+   * attenion_mask: [max_seqlen, max_seqlen]
+   * output:[ntokens, hidden_size]
+   */
   float tor = (float)(param_.layerId + 1);
   flashAttentionNode.opDesc = {0, "AttentionOperation",
                                 AsdOps::OpParam::Attention{param_.headNum, param_.seqLen, param_.tokenOffset, tor}};
@@ -182,7 +171,7 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
   {
     newDims = {oldDims.at(0) * oldDims.at(1), oldDims.at(2) * oldDims.at(3)};
   };
-
+  /* [ntokens, hidden_size]-> [seq_len, batch_size, hidden_size] -> [batch_size, seq_len, hidden_size] */
   AsdOps::OpParam::Transpose permuteflashOutNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2}};
   permuteflashOutNode.opDesc = {0, "TransposeOperation", permuteflashOutNodeParam};
   permuteflashOutNode.inTensors = {&attOut};
@@ -190,7 +179,7 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMuls()
   permuteflashOutNode.inTensorViewFuncs.resize(permuteflashOutNode.inTensors.size());
   permuteflashOutNode.inTensorViewFuncs[0] = [](const AsdOps::SVector<int64_t> &oldDims,
                                                 AsdOps::SVector<int64_t> &newDims) {
-    newDims = {1, oldDims.at(0), oldDims.at(1)}; /* 1其实batch维 */
+    newDims = {1, oldDims.at(0), oldDims.at(1)}; /* 增量seq_len固定为1 */
   };
 }
 
@@ -210,7 +199,7 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMulsBS1()
 
   kernelGraph_.outTensors.resize(1);
   AsdOps::Tensor &context = kernelGraph_.outTensors.at(0);
-  // AsdOps::Tensor &transposedContext = kernelGraph_.outTensors.at(0);
+
 
   size_t internalTensorId = 0;
   kernelGraph_.internalTensors.resize(5);
@@ -218,22 +207,16 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMulsBS1()
   AsdOps::Tensor &mixedQuery = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &mixedKey = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &mixedValue = kernelGraph_.internalTensors.at(internalTensorId++);
-  // AsdOps::Tensor &transposedCacheK = kernelGraph_.internalTensors.at(internalTensorId++);
-  // AsdOps::Tensor &transposedCacheV = kernelGraph_.internalTensors.at(internalTensorId++);
   AsdOps::Tensor &divOut = kernelGraph_.internalTensors.at(internalTensorId++);
-  //AsdOps::Tensor &attOut = kernelGraph_.internalTensors.at(internalTensorId++);
 
   size_t nodeId = 0;
   kernelGraph_.nodes.resize(6);
   auto &permuteMixNode = kernelGraph_.nodes.at(nodeId++);
   auto &splitNode = kernelGraph_.nodes.at(nodeId++);
-  // auto &permuteCacheKNode = kernelGraph_.nodes.at(nodeId++);
   auto &kCacheNode = kernelGraph_.nodes.at(nodeId++);
-  // auto &permuteCacheVNode = kernelGraph_.nodes.at(nodeId++);
   auto &vCacheNode = kernelGraph_.nodes.at(nodeId++);
   auto &mulsQNode = kernelGraph_.nodes.at(nodeId++);
   auto &flashAttentionNode = kernelGraph_.nodes.at(nodeId++);
-  //auto &permuteflashOutNode = kernelGraph_.nodes.at(nodeId++);
 
   AsdOps::OpParam::Transpose permuteMixNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2}};
   permuteMixNode.opDesc = {0, "TransposeOperation", permuteMixNodeParam};
@@ -259,11 +242,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMulsBS1()
     }
   };
 
-  // AsdOps::OpParam::Transpose permuteCacheKNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2, 3}};
-  // permuteCacheKNode.opDesc = {0, "TransposeOperation", permuteCacheKNodeParam};
-  // permuteCacheKNode.inTensors = {&cacheK};
-  // permuteCacheKNode.outTensors = {&transposedCacheK};
-
   // 1、k cache
   kCacheNode.opDesc = {0, "KVCacheOperation", AsdOps::OpParam::KVCache{AsdOps::OpParam::KVCache::KVCACHE}};
   kCacheNode.inTensors = {&mixedKey, &layerId, &cacheK, &tokenOffset, &seqLen};
@@ -282,11 +260,6 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::BuildGraphWithMulsBS1()
   };
 
   // 2、V cache  seq_len, batch, head_num, head_size]
-  // AsdOps::OpParam::Transpose permuteCacheVNodeParam = {AsdOps::OpParam::Transpose::TransposeType::TRANSPOSE, {1, 0, 2, 3}};
-  // permuteCacheVNode.opDesc = {0, "TransposeOperation", permuteCacheVNodeParam};
-  // permuteCacheVNode.inTensors = {&cacheV};
-  // permuteCacheVNode.outTensors = {&transposedCacheV};
-
   vCacheNode.opDesc = {0, "KVCacheOperation", AsdOps::OpParam::KVCache{AsdOps::OpParam::KVCache::KVCACHE}};
   vCacheNode.inTensors = {&mixedValue, &layerId, &cacheV, &tokenOffset, &seqLen};
   vCacheNode.outTensors = {&cacheV}; // Kcache and Vcache output and input use same space
@@ -346,13 +319,12 @@ void SelfAttentionKvCacheFusionOpsGPT3Runner::SetKernelGrapModifyFunc()
     }
     const SelfAttentionKvCacheFusionVariantPackParam &newParam =
         AsdOps::AnyCast<SelfAttentionKvCacheFusionVariantPackParam>(runnerVariantPack.param);
-    const size_t flashAttentionNodeId = 5;
+    const size_t flashAttentionNodeId = 5; // 注意为flashAttention node 的index，如果有改动需要，一定要适配！
     auto &flashAttentionNode = kernelGraph_.nodes.at(flashAttentionNodeId);
 
-    float tor = 32;
     flashAttentionNode.opDesc = {
         0, "AttentionOperation",
-        AsdOps::OpParam::Attention{param_.headNum, newParam.seqLen, newParam.tokenOffset, tor}};
+        AsdOps::OpParam::Attention{param_.headNum, newParam.seqLen, newParam.tokenOffset, (float)(param_.layerId + 1)}};
 
     ASD_LOG(INFO) << "SelfAttentionKvCacheFusionOpsGPT3Runner SetOpDesc AsdOps::OpParam::Attention.headNum:"
                   << param_.headNum << ", seqLen:" << newParam.seqLen << ", tokenOffset:" << newParam.tokenOffset;
