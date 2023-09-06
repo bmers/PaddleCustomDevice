@@ -11,13 +11,14 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
 #include <iostream>
 #include <vector>
 
 #include "kernels/funcs/npu_op_runner.h"
 #include "paddle/extension.h"
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+
 #include "kernels/funcs/format_utils.h"
 #include "acltransformer/params/norm.h"
 #include <asdops/utils/rt/rt.h>
@@ -29,7 +30,7 @@
 #include "acltransformer/statistic.h"
 #include "acltransformer/ops/embedding_operation.h"
 #include "kernels/funcs/format_utils.h"
-#endif
+
 
 struct EmbeddingWorkspace {
   void *workspace_ = nullptr;
@@ -183,3 +184,4 @@ PD_BUILD_OP(embedding_op)
     .SetKernelFn(PD_KERNEL(EmbeddingOp))
     .SetInferShapeFn(PD_INFER_SHAPE(
         EmbeddingOpInferShape));  // neccessary if the op has muti_inputs
+#endif

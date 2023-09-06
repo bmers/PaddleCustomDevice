@@ -38,7 +38,8 @@ std::vector<paddle::Tensor> AddOp(
   auto x = static_cast<const phi::DenseTensor*>(x_tensor.impl().get());
   auto y = static_cast<const phi::DenseTensor*>(y_tensor.impl().get());
 
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   std::shared_ptr<phi::DenseTensor> out =
       std::make_shared<phi::DenseTensor>();
   auto out_shape = AddOpInferShape(

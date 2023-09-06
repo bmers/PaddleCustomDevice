@@ -57,7 +57,8 @@ std::vector<paddle::Tensor> AddNormOp(
   out_tensor->Resize(phi::make_ddim(out_shape));
   
   dev_ctx->Alloc(out_tensor.get(), x_tensor->dtype());
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   auto x_tensor_asd = ConvertDenseTensorToAsdTensor(*x_tensor);
   auto y_tensor_asd = ConvertDenseTensorToAsdTensor(*y_tensor);
   auto weight_tensor_asd = ConvertDenseTensorToAsdTensor(*weight_tensor);

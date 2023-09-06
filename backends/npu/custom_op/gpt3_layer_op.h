@@ -14,7 +14,8 @@
 
 #pragma once
 
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
 #include <atomic>
 #include <thread>
 #include <queue>

@@ -524,7 +524,8 @@ C_Status XcclDestroyComm(C_CCLComm comm) {
   return C_SUCCESS;
 }
 
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
 struct LayerWorkspace {
   void *workspace_ = nullptr;
   uint64_t workspaceSize_ = 0;
@@ -584,7 +585,8 @@ C_Status XcclAllReduce(void *send_buf,
                        C_CCLReduceOp op,
                        C_CCLComm comm,
                        C_Stream stream) {
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   AclTransformer::Handle handle = {reinterpret_cast<aclrtStream>(stream)};
   if (!g_allreduceOp) {
     AclTransformer::AllReduceParam param =
@@ -663,7 +665,8 @@ C_Status XcclReduce(void *send_buf,
   return C_SUCCESS;
 }
 
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
 
 LayerWorkspace g_allgatherWorkSpace = {nullptr, 0};
 
@@ -705,7 +708,8 @@ C_Status XcclAllGather(void *send_buf,
                        C_DataType data_type,
                        C_CCLComm comm,
                        C_Stream stream) {
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   
   AclTransformer::Handle handle = {reinterpret_cast<aclrtStream>(stream)};
   if (!g_allgatherOp) {

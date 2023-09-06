@@ -101,7 +101,8 @@ std::vector<paddle::Tensor> MatmulOp(
   
   auto x = static_cast<const phi::DenseTensor*>(input_x.impl().get());
   auto y = static_cast<const phi::DenseTensor*>(input_y.impl().get());
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   std::shared_ptr<phi::DenseTensor> out_tensor =
       std::make_shared<phi::DenseTensor>();
   auto out_shape = MatmulOpInferShape(

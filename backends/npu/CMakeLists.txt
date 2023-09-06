@@ -55,6 +55,7 @@ if(WITH_KERNELS)
     file(
       GLOB_RECURSE CUSTOM_ACC_RUNNER_SRCS
       RELATIVE ${CMAKE_SOURCE_DIR}
+      custom_op/llama_layer/*.cpp
       custom_op/self_attention/*.cpp
       custom_op/self_attention_kv_cache_fusion_gpt3/*.cpp)
     list(APPEND CUSTOM_NPU_SRCS ${CUSTOM_ACC_RUNNER_SRCS})
@@ -82,6 +83,8 @@ target_link_libraries(${CUSTOM_NPU_NAME} PRIVATE ${acl_op_compiler_lib})
 if(WITH_ASCEND_TRANSFORMER_ACC)
   target_link_libraries(${CUSTOM_NPU_NAME} PRIVATE $ENV{ACLTRANSFORMER_HOME_PATH}/lib/libacltransformer.so)
   include_directories($ENV{ACLTRANSFORMER_HOME_PATH}/include)
+  link_directories($ENV{ATB_HOME_PATH}/lib)
+  include_directories($ENV{ATB_HOME_PATH}/include)
 endif()
 
 # link paddle shared library

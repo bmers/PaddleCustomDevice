@@ -43,7 +43,8 @@ std::vector<paddle::Tensor> LinearOp(
   auto x = static_cast<const phi::DenseTensor*>(input.impl().get());
   auto y = static_cast<const phi::DenseTensor*>(weight.impl().get());
   auto b = static_cast<const phi::DenseTensor*>(bias.impl().get());
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   std::shared_ptr<phi::DenseTensor> out_tensor =
       std::make_shared<phi::DenseTensor>();
   auto out_shape = LinearOpInferShape(

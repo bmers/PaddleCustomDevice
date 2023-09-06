@@ -50,7 +50,8 @@ std::vector<paddle::Tensor> LayerNormOp(
       input.shape(), weight.shape(), bias.shape()).at(0);
   out_tensor->Resize(phi::make_ddim(out_shape));
   dev_ctx->Alloc(out_tensor.get(), input_tensor->dtype());
-#ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+// #ifdef PADDLE_WITH_ASCEND_TRANSFORMER_ACC
+#if 0
   auto input_asd = ConvertDenseTensorToAsdTensor(*input_tensor);
   auto weight_asd = ConvertDenseTensorToAsdTensor(*weight_tensor);
   auto bias_asd = ConvertDenseTensorToAsdTensor(*bias_tensor);
