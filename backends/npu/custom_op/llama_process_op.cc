@@ -195,11 +195,11 @@ std::vector<paddle::Tensor> SetMaskValueOp(const paddle::Tensor& input_data,
   out_tensor->Resize(seq_lens_tensor->dims());
   dev_ctx->Alloc(out_tensor.get(), seq_lens_tensor->dtype());
 
-  const auto& runner =
-      NpuOpRunner("SetMaskValue", {*input_data_tensor, *stop_flags_tensor, *seq_lens_tensor}, {*out_tensor}, {});
-  runner.Run(stream);
+  // const auto& runner =
+  //     NpuOpRunner("SetMaskValue", {*input_data_tensor, *stop_flags_tensor, *seq_lens_tensor}, {*out_tensor}, {});
+  // runner.Run(stream);
 
-  return {paddle::Tensor(out_tensor)};
+  return {paddle::Tensor(seq_lens)};
 }
 
 std::vector<std::vector<int64_t>> SetMaskValueOpInferShape(

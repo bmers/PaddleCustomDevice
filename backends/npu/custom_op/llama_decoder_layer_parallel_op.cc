@@ -130,9 +130,12 @@ void PpAtbLlamaDecoderLayerParallelOp::UpdateInputTensorAndParam(const paddle::T
 
   int32_t batch_size = seq_len.shape().at(0);
   std::vector<int32_t> seq_len_vec;
+  for (int i = 0; i < batch_size; i++) {
+    seq_len_vec.push_back(1024);
+  }
 
-  auto seq_len_tensor = const_cast<phi::DenseTensor *>(static_cast<const phi::DenseTensor *>(seq_len.impl().get()));
-  custom_kernel::TensorToVector(*dev_ctx, *seq_len_tensor, *dev_ctx, &seq_len_vec);
+  // auto seq_len_tensor = const_cast<phi::DenseTensor *>(static_cast<const phi::DenseTensor *>(seq_len.impl().get()));
+  // custom_kernel::TensorToVector(*dev_ctx, *seq_len_tensor, *dev_ctx, &seq_len_vec);
 
   kv_seq_len_param_.clear();
   batch_status_param_.clear();
